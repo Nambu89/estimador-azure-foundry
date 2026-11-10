@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<meta name="theme-color" content="#07130e">
+	<title>Estimador de costes de Azure</title>
+	<meta name="description" content="Describe tu carga de trabajo y un agente de Microsoft Foundry te dice cuánto cuesta en Azure, con precios oficiales y fuentes de Microsoft Learn.">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2307130e'/%3E%3Crect x='7' y='17' width='4' height='8' fill='%231d5e3e'/%3E%3Crect x='14' y='12' width='4' height='13' fill='%232e9e62'/%3E%3Crect x='21' y='7' width='4' height='18' fill='%235cff9d'/%3E%3C/svg%3E">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap">
+	<link rel="stylesheet" href="estilos.css">
+	<script type="module" src="app.js"></script>
+</head>
+<body>
+	<header class="barra">
+		<a class="marca" href="./" aria-label="Estimador de costes de Azure, inicio">
+			<svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0f2a1f"/><rect x="7" y="17" width="4" height="8" fill="#1d5e3e"/><rect x="14" y="12" width="4" height="13" fill="#2e9e62"/><rect x="21" y="7" width="4" height="18" fill="#5cff9d"/></svg>
+			<span>estimador<b>/</b>azure</span>
+		</a>
+		<span class="modo" id="modo" hidden></span>
+		<button class="boton-fantasma" id="nueva" type="button" hidden>
+			<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+			<span>Nueva estimación</span>
+		</button>
+	</header>
+
+	<main class="conversacion" id="conversacion">
+		<section class="inicio" id="inicio">
+			<div class="inicio-texto">
+				<p class="antetitulo">Hosted Agent · Microsoft Foundry · Agent Framework</p>
+				<h1>Cuéntame tu carga.<br><em>Te digo lo que cuesta en Azure.</em></h1>
+				<p class="entradilla">Describe la aplicación como se la contarías a un compañero: usuarios, datos y región. Si falta algo, el agente te pregunta.</p>
+			</div>
+			<ol class="flujo" aria-label="Cómo se hace una estimación">
+				<li>
+					<span class="flujo-num">01</span>
+					<strong>Microsoft Learn</strong>
+					<span>El modelo consulta la documentación y elige servicios y niveles.</span>
+				</li>
+				<li>
+					<span class="flujo-num">02</span>
+					<strong>Azure Retail Prices</strong>
+					<span>Los precios salen de la api oficial, medidor a medidor.</span>
+				</li>
+				<li>
+					<span class="flujo-num">03</span>
+					<strong>Python hace las cuentas</strong>
+					<span>El modelo nunca suma. El total lo calcula el código.</span>
+				</li>
+			</ol>
+			<div class="ejemplos">
+				<p class="ejemplos-titulo">Prueba con</p>
+				<button type="button" class="ejemplo">Web para 2.000 usuarios en Sweden Central con SQL y 500 GB de ficheros</button>
+				<button type="button" class="ejemplo">API en contenedores con Cosmos DB para 50.000 peticiones al día en West Europe</button>
+				<button type="button" class="ejemplo">Una VM Linux de 4 núcleos encendida 8 horas al día en Spain Central</button>
+			</div>
+		</section>
+	</main>
+
+	<form class="compositor" id="compositor">
+		<div class="compositor-caja">
+			<label for="pregunta" class="sr-only">Describe tu carga de trabajo</label>
+			<textarea id="pregunta" rows="1" maxlength="4000" placeholder="Web para 2.000 usuarios en Sweden Central con SQL…" autocomplete="off"></textarea>
+			<button type="submit" class="enviar" id="enviar" aria-label="Enviar">
+				<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+			</button>
+		</div>
+		<p class="aviso">Precios de lista de pago por uso, sin impuestos. Orientativo, no es una oferta.</p>
+	</form>
+
+	<p class="sr-only" id="anuncio" role="status" aria-live="polite"></p>
+</body>
+</html>
