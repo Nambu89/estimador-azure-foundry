@@ -22,6 +22,7 @@ MONEDA = os.environ.get("MONEDA", "EUR")
 
 # Medidores que ya ha visto el agente. Son precios públicos, así que se pueden compartir entre sesiones.
 MEDIDORES: dict[str, precios.Medidor] = {}
+MAX_CACHE = 5_000  # shortcut: al llegar se vacía entera; calcular_estimacion vuelve a pedir lo que falte
 
 INSTRUCCIONES = f"""Eres un estimador de costes de Azure. Hablas en castellano, claro y sin rodeos.
 
@@ -67,11 +68,14 @@ async def buscar_precios(
 	"""Busca precios de pago por uso de un servicio de Azure en una región. Devuelve medidores con su meter_id."""
 	filtro = precios.construir_filtro(servicio, region, sku_contiene, producto_contiene)
 	medidores = precios.agrupar(await precios.consultar(filtro, MONEDA))
-	for m in medidores:
-		MEDIDORES[m.meter_id] = m
 	if not medidores:
 		return json.dumps({"medidores": [], "aviso": "Sin resultados. Revisa el nombre del servicio, la región o el filtro de SKU."}, ensure_ascii=False)
 	medidores.sort(key=lambda m: (m.producto, m.sku, m.nombre))
+	# En la caché solo lo que ve el modelo: es compartida entre sesiones y sin tope crecería sin límite
+	if len(MEDIDORES) > MAX_CACHE:
+		MEDIDORES.clear()
+	for m in medidores[: precios.MAX_RESULTADOS]:
+		MEDIDORES[m.meter_id] = m
 	# Servicio y región van una sola vez y no en cada medidor: menos tokens en cada vuelta del bucle
 	return json.dumps({
 		"servicio": servicio,
@@ -99,12 +103,12 @@ class LineaEntrada(BaseModel):
 
 @tool(approval_mode="never_require")
 async def calcular_estimacion(
-	lineas: Annotated[list[LineaEntrada], Field(description="Las líneas de la estimación.")],
+	lineas: Annotated[list[LineaEntrada], Field(max_length=40, description="Las líneas de la estimación (40 como mucho).")],
 ) -> str:
 	"""Calcula el coste mensual de cada línea y el total con los precios oficiales. Es la única fuente de importes."""
 	# Agent Framework entrega cada línea como dict: se valida aquí con el modelo de Pydantic
 	lineas = [LineaEntrada.model_validate(ln) for ln in lineas]
-	faltan = [ln.meter_id for ln in lineas if ln.meter_id not in MEDIDORES]
+	faltan = {ln.meter_id for ln in lineas if ln.meter_id not in MEDIDORES}
 	for meter_id in faltan:
 		filas = await precios.consultar(precios.filtro_medidor(meter_id), MONEDA)
 		for m in precios.agrupar(filas):
@@ -122,6 +126,10 @@ def main():
 		model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
 		credential=DefaultAzureCredential(),
 	)
+	# Tope de vueltas y de llamadas a herramientas por pregunta: una inyección de prompt no puede encadenar
+	# búsquedas sin fin y gastar los tokens por minuto que comparten todos los usuarios (una estimación normal usa ~10)
+	client.function_invocation_configuration["max_iterations"] = 15
+	client.function_invocation_configuration["max_function_calls"] = 25
 	learn = client.get_mcp_tool(
 		name="microsoft_learn",
 		url="https://learn.microsoft.com/api/mcp",

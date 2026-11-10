@@ -26,3 +26,13 @@ async def test_calcular_estimacion_rechaza_horas_imposibles():
 		assert "horas_mes" in str(e) or "744" in str(e)
 	else:
 		raise AssertionError("debería rechazar horas_mes > 744")
+
+
+async def test_calcular_estimacion_rechaza_demasiadas_lineas():
+	lineas = [{"meter_id": "x:y", "cantidad": 1}] * 41
+	try:
+		await main.calcular_estimacion.invoke(arguments={"lineas": lineas})
+	except Exception as e:
+		assert "40" in str(e) or "lineas" in str(e)
+	else:
+		raise AssertionError("debería rechazar más de 40 líneas")
