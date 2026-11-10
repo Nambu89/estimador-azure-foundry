@@ -141,8 +141,9 @@ async def test_respuesta_real_de_la_api():
 	assert r["total_mensual"] == "1347.50"  # 1.347,495 sin redondeos intermedios
 
 
-async def test_consultar_recupera_desde_usd_los_precios_que_la_api_redondea_a_cero():
+async def test_consultar_recupera_desde_usd_los_precios_que_la_api_redondea_a_cero(monkeypatch):
 	"""Respuestas reales de Functions en swedencentral (2026-11-09): en EUR, Consumo sale a 0,0 por el redondeo."""
+	monkeypatch.setattr(precios, "_tipos", {})
 	peticiones = []
 
 	def responder(request: httpx.Request) -> httpx.Response:
@@ -151,7 +152,7 @@ async def test_consultar_recupera_desde_usd_los_precios_que_la_api_redondea_a_ce
 
 	async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as http:
 		medidores = precios.agrupar(await precios.consultar("filtro", "EUR", http))
-	assert len(peticiones) == 2  # EUR y, como hay precios a 0, USD
+	assert len(peticiones) == 4  # EUR, USD (hay precios a 0) y la consulta de referencia del tipo de cambio en las dos monedas
 	tiempo = next(m for m in medidores if m.nombre == "Standard Execution Time")
 	# Tramo gratis (0 en las dos monedas) se queda a 0; el de pago: 0,000016 $ × (0,1517 / 0,169)
 	assert tiempo.tramos[0].precio == 0
@@ -169,3 +170,150 @@ async def test_estimar_muestra_a_que_equivale_la_cantidad_en_unidades_base():
 	r = precios.estimar([precios.Linea(ESCRITURAS, 3000)], medidores)
 	assert r["lineas"][0]["cantidad"] == "3000 × 10K = 30.000.000"
 	assert r["total_mensual"] == "150.00"  # 3000 × 0,05
+
+
+def _servidor_functions(peticiones, solo_standard_en_consulta):
+	"""Responde la referencia con todas las filas de Functions y la consulta, si se pide, solo con las Standard."""
+	def responder(request: httpx.Request) -> httpx.Response:
+		peticiones.append(request)
+		datos = _cargar("functions_usd.json" if "USD" in str(request.url) else "functions_eur.json")
+		if solo_standard_en_consulta and "Azure+App+Service" not in str(request.url):
+			datos = dict(datos, Items=[i for i in datos["Items"] if i["skuName"] == "Standard"])
+		return httpx.Response(200, json=datos)
+	return httpx.AsyncClient(transport=httpx.MockTransport(responder))
+
+
+async def test_el_precio_convertido_no_depende_de_la_consulta(monkeypatch):
+	"""Antes, una consulta sin filas de referencia (solo Standard) dejaba el precio a 0 en la caché compartida."""
+	precios_vistos = []
+	for estrecha in (False, True):
+		monkeypatch.setattr(precios, "_tipos", {})
+		async with _servidor_functions([], estrecha) as http:
+			ms = precios.agrupar(await precios.consultar("filtro", "EUR", http))
+		precios_vistos.append(next(m for m in ms if m.nombre == "Standard Execution Time").tramos[1].precio)
+	assert precios_vistos[0] == precios_vistos[1] > 0
+
+
+async def test_el_tipo_de_cambio_se_pide_una_vez(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {})
+	peticiones = []
+	async with _servidor_functions(peticiones, False) as http:
+		await precios.consultar("filtro", "EUR", http)
+		await precios.consultar("filtro", "EUR", http)
+	assert sum("Azure+App+Service" in str(r.url) for r in peticiones) == 2  # EUR y USD, solo la primera vez
+
+
+def _servidor_con_referencia(referencia_x, falla_referencia=False, peticiones=None):
+	"""Referencia con un tipo distinto al de la consulta (precios EUR × referencia_x), o caída con un 500."""
+	def responder(request: httpx.Request) -> httpx.Response:
+		if peticiones is not None:
+			peticiones.append(request)
+		usd = "USD" in str(request.url)
+		datos = _cargar("functions_usd.json" if usd else "functions_eur.json")
+		if "Azure+App+Service" in str(request.url):
+			if falla_referencia:
+				return httpx.Response(500)
+			if not usd:
+				datos = dict(datos, Items=[dict(i, retailPrice=round(i["retailPrice"] * referencia_x, 4)) for i in datos["Items"]])
+		return httpx.Response(200, json=datos)
+	return httpx.AsyncClient(transport=httpx.MockTransport(responder))
+
+
+async def test_se_usa_el_tipo_de_la_referencia_y_no_el_de_la_consulta(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {})
+	async with _servidor_con_referencia(1.1) as http:
+		ms = precios.agrupar(await precios.consultar("filtro", "EUR", http))
+	tipo_ref = Decimal(str(round(0.1517 * 1.1, 4))) / Decimal("0.169")
+	m = next(m for m in ms if m.nombre == "Standard Execution Time")
+	assert m.tramos[1].precio == (Decimal("0.000016") * tipo_ref).quantize(Decimal("1e-10"))
+	assert not m.provisional
+
+
+async def test_si_la_referencia_falla_los_medidores_son_provisionales(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {})
+	async with _servidor_con_referencia(1.0, falla_referencia=True) as http:
+		ms = precios.agrupar(await precios.consultar("filtro", "EUR", http))  # no lanza: usa el tipo de la consulta
+	m = next(m for m in ms if m.nombre == "Standard Execution Time")
+	assert m.provisional and m.tramos[1].precio > 0
+	premium = next(m for m in ms if m.nombre == "Premium vCPU Duration")
+	assert not premium.provisional  # No se ha convertido: su precio no depende del tipo, puede ir a la caché
+
+
+async def test_tras_un_fallo_de_la_referencia_no_se_reintenta_enseguida(monkeypatch):
+	peticiones = []
+	async with _servidor_con_referencia(1.0, falla_referencia=True, peticiones=peticiones) as http:
+		await precios.consultar("filtro", "EUR", http)
+		await precios.consultar("filtro", "EUR", http)
+	assert sum("Azure+App+Service" in str(r.url) for r in peticiones) == 1  # solo la primera vez (falla en EUR)
+
+
+async def test_si_la_referencia_falla_se_usa_el_tipo_de_ayer(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {"EUR": (Decimal("0.9"), precios.time.time() - 2 * 86400)})  # de anteayer
+	async with _servidor_con_referencia(1.0, falla_referencia=True) as http:
+		ms = precios.agrupar(await precios.consultar("filtro", "EUR", http))
+	m = next(m for m in ms if m.nombre == "Standard Execution Time")
+	assert m.tramos[1].precio == (Decimal("0.000016") * Decimal("0.9")).quantize(Decimal("1e-10"))
+	assert not m.provisional
+
+
+async def test_sin_referencia_una_consulta_estrecha_no_deja_ceros_en_la_cache(monkeypatch):
+	"""Una consulta sin filas de 0,1 o más no tiene tipo propio: sus precios a 0 tienen que ser provisionales."""
+	def responder(request: httpx.Request) -> httpx.Response:
+		if "Azure+App+Service" in str(request.url):
+			return httpx.Response(500)
+		datos = _cargar("functions_usd.json" if "USD" in str(request.url) else "functions_eur.json")
+		return httpx.Response(200, json=dict(datos, Items=[i for i in datos["Items"] if i["meterName"] == "Standard Execution Time"]))
+	async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as http:
+		m, = precios.agrupar(await precios.consultar("filtro", "EUR", http))
+	assert m.provisional  # aunque no se haya podido convertir
+
+
+async def test_el_cupo_agotado_al_pedir_la_referencia_no_cuenta_como_fallo(monkeypatch):
+	monkeypatch.setattr(precios, "MAX_SALIDAS_POR_MINUTO", 2)  # EUR y USD de la consulta; la referencia ya no cabe
+	async with _servidor_con_referencia(1.0) as http:
+		with pytest.raises(RuntimeError, match="Demasiadas consultas"):
+			await precios.consultar("filtro", "EUR", http)
+	assert not precios._fallos_tipo  # la api está bien: no se bloquea la referencia 5 minutos
+
+
+async def test_durante_la_espera_tras_un_fallo_se_usa_el_tipo_de_ayer(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {"EUR": (Decimal("0.9"), precios.time.time() - 2 * 86400)})
+	monkeypatch.setattr(precios, "_fallos_tipo", {"EUR": precios.time.time()})
+	async with _servidor_con_referencia(1.0) as http:
+		assert await precios.tipo_de_cambio("EUR", http) == Decimal("0.9")
+
+
+async def test_un_tipo_de_hace_mas_de_una_semana_no_sirve(monkeypatch):
+	monkeypatch.setattr(precios, "_tipos", {"EUR": (Decimal("0.9"), precios.time.time() - 8 * 86400)})
+	async with _servidor_con_referencia(1.0, falla_referencia=True) as http:
+		assert await precios.tipo_de_cambio("EUR", http) is None
+
+
+async def test_con_la_cache_fria_la_referencia_se_pide_una_vez_aunque_haya_consultas_a_la_vez():
+	import asyncio
+	peticiones = []
+	async with _servidor_con_referencia(1.0, peticiones=peticiones) as http:
+		await asyncio.gather(*(precios.consultar("filtro", "EUR", http) for _ in range(3)))
+	assert sum("Azure+App+Service" in str(r.url) for r in peticiones) == 2  # EUR y USD una sola vez
+
+
+async def test_una_referencia_en_otra_moneda_no_se_guarda():
+	"""Si la api ignora currencyCode y devuelve USD, el tipo saldría 1: no es plausible y no se guarda."""
+	def responder(request: httpx.Request) -> httpx.Response:
+		datos = _cargar("functions_usd.json" if "USD" in str(request.url) or "Azure+App+Service" in str(request.url) else "functions_eur.json")
+		return httpx.Response(200, json=datos)
+	async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as http:
+		ms = precios.agrupar(await precios.consultar("filtro", "EUR", http))
+	assert "EUR" not in precios._tipos
+	assert next(m for m in ms if m.nombre == "Standard Execution Time").provisional
+
+
+async def test_cupo_global_de_salidas_a_la_api(monkeypatch):
+	monkeypatch.setattr(precios, "MAX_SALIDAS_POR_MINUTO", 3)
+	monkeypatch.setattr(precios, "_ultimas_salidas", __import__("collections").deque())
+	peticiones = []
+	async with _cliente_simulado(peticiones) as http:
+		await precios.consultar("filtro", "EUR", http)  # 2 páginas
+		with pytest.raises(RuntimeError, match="Demasiadas consultas"):
+			await precios.consultar("filtro", "EUR", http)
+	assert len(peticiones) == 3

@@ -38,6 +38,10 @@ services:
       PYTHONNOUSERSITE: "1"
       AZURE_AI_MODEL_DEPLOYMENT_NAME: gpt-5-mini
       MONEDA: EUR
+      # Items de la conversación anterior que se reenvían al modelo (sin esto, todos). Una estimación genera unos 30
+      # y el proxy deja 8 turnos (~240): con 400 el corte no actúa en el caso normal (podría separar una llamada de su resultado).
+      # En el peor caso (todos los topes de herramientas en cada turno) sí puede actuar
+      DEFAULT_FETCH_HISTORY_ITEM_COUNT: "400"
     container:
       resources:
         cpu: '0.5'

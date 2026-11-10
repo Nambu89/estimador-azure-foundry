@@ -5,10 +5,13 @@
 """
 import json
 import os
+import time
 
+import httpx
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -22,7 +25,33 @@ MONEDA = os.environ.get("MONEDA", "EUR")
 
 # Medidores que ya ha visto el agente. Son precios públicos, así que se pueden compartir entre sesiones.
 MEDIDORES: dict[str, precios.Medidor] = {}
-MAX_CACHE = 5_000  # shortcut: al llegar se vacía entera; calcular_estimacion vuelve a pedir lo que falte
+MAX_CACHE = 5_000  # Al llegar se quitan los más antiguos: lo recién buscado por otra sesión sigue en caché
+MAX_RECARGAS = 5  # Medidores sin buscar que calcular_estimacion pide a la api en una llamada: con meter_id inventados serían cientos
+# Medidores convertidos sin el tipo de referencia: sirven para la estimación en curso, pero no se guardan mucho
+# tiempo (su precio depende de qué filas trajo la consulta). meter_id -> (caduca, medidor)
+PROVISIONALES: dict[str, tuple[float, precios.Medidor]] = {}
+VIDA_PROVISIONAL = 600
+
+
+def guardar(m: precios.Medidor):
+	"""Guarda un medidor en la caché que le toca. Las dos están acotadas: son compartidas entre sesiones."""
+	ahora = time.time()
+	if m.provisional:
+		for k in [k for k, (caduca, _) in PROVISIONALES.items() if caduca < ahora]:
+			del PROVISIONALES[k]
+		cache, valor = PROVISIONALES, (ahora + VIDA_PROVISIONAL, m)
+	else:
+		cache, valor = MEDIDORES, m
+	cache.pop(m.meter_id, None)  # Al final del orden: es el más reciente
+	cache[m.meter_id] = valor
+	while len(cache) > MAX_CACHE:
+		del cache[next(iter(cache))]  # El dict guarda el orden de entrada: el primero es el más antiguo
+
+
+def conocidos() -> dict[str, precios.Medidor]:
+	"""Copia de los medidores que se pueden usar ahora: otra sesión puede vaciar las cachés mientras esta espera a la api."""
+	ahora = time.time()
+	return {**{k: m for k, (caduca, m) in PROVISIONALES.items() if caduca >= ahora}, **MEDIDORES}
 
 INSTRUCCIONES = f"""Eres un estimador de costes de Azure. Hablas en castellano, claro y sin rodeos.
 
@@ -67,15 +96,16 @@ async def buscar_precios(
 ) -> str:
 	"""Busca precios de pago por uso de un servicio de Azure en una región. Devuelve medidores con su meter_id."""
 	filtro = precios.construir_filtro(servicio, region, sku_contiene, producto_contiene)
-	medidores = precios.agrupar(await precios.consultar(filtro, MONEDA))
+	try:
+		medidores = precios.agrupar(await precios.consultar(filtro, MONEDA))
+	except (RuntimeError, httpx.HTTPError) as e:  # Cupo de salidas agotado o api caída: que el modelo lo sepa y pare
+		return json.dumps({"error": f"La api de precios no ha respondido: {e}"}, ensure_ascii=False)
 	if not medidores:
 		return json.dumps({"medidores": [], "aviso": "Sin resultados. Revisa el nombre del servicio, la región o el filtro de SKU."}, ensure_ascii=False)
 	medidores.sort(key=lambda m: (m.producto, m.sku, m.nombre))
 	# En la caché solo lo que ve el modelo: es compartida entre sesiones y sin tope crecería sin límite
-	if len(MEDIDORES) > MAX_CACHE:
-		MEDIDORES.clear()
 	for m in medidores[: precios.MAX_RESULTADOS]:
-		MEDIDORES[m.meter_id] = m
+		guardar(m)
 	# Servicio y región van una sola vez y no en cada medidor: menos tokens en cada vuelta del bucle
 	return json.dumps({
 		"servicio": servicio,
@@ -108,13 +138,20 @@ async def calcular_estimacion(
 	"""Calcula el coste mensual de cada línea y el total con los precios oficiales. Es la única fuente de importes."""
 	# Agent Framework entrega cada línea como dict: se valida aquí con el modelo de Pydantic
 	lineas = [LineaEntrada.model_validate(ln) for ln in lineas]
-	faltan = {ln.meter_id for ln in lineas if ln.meter_id not in MEDIDORES}
+	disponibles = conocidos()
+	faltan = {ln.meter_id for ln in lineas if ln.meter_id not in disponibles}
+	if len(faltan) > MAX_RECARGAS:
+		return json.dumps({"error": f"Hay {len(faltan)} medidores que no están en la caché. Vuelve a buscar esos servicios con buscar_precios y usa sus meter_id."}, ensure_ascii=False)
 	for meter_id in faltan:
-		filas = await precios.consultar(precios.filtro_medidor(meter_id), MONEDA)
+		try:
+			filas = await precios.consultar(precios.filtro_medidor(meter_id), MONEDA)
+		except (RuntimeError, httpx.HTTPError) as e:
+			return json.dumps({"error": f"La api de precios no ha respondido: {e}"}, ensure_ascii=False)
 		for m in precios.agrupar(filas):
-			MEDIDORES[m.meter_id] = m
+			disponibles[m.meter_id] = m
+			guardar(m)
 	try:
-		resultado = precios.estimar([precios.Linea(**ln.model_dump()) for ln in lineas], MEDIDORES)
+		resultado = precios.estimar([precios.Linea(**ln.model_dump()) for ln in lineas], disponibles)
 	except ValueError as e:
 		return json.dumps({"error": str(e)}, ensure_ascii=False)
 	return json.dumps(resultado, ensure_ascii=False)
@@ -130,6 +167,10 @@ def main():
 	# búsquedas sin fin y gastar los tokens por minuto que comparten todos los usuarios (una estimación normal usa ~10)
 	client.function_invocation_configuration["max_iterations"] = 15
 	client.function_invocation_configuration["max_function_calls"] = 25
+	# Las llamadas que el modelo pide en un mismo lote se ejecutan en serie (no cuesta tokens: es local) y con un
+	# tope de tiempo. Un lote grande puede pasar de 25 en su vuelta; las salidas a la api las acota precios._paginas
+	client.function_invocation_configuration["allow_concurrent_invocation"] = False
+	client.function_invocation_configuration["max_duration_seconds"] = 240
 	learn = client.get_mcp_tool(
 		name="microsoft_learn",
 		url="https://learn.microsoft.com/api/mcp",
@@ -146,9 +187,11 @@ def main():
 		# store: el historial lo guarda la plataforma de Hosted Agents.
 		# max_tokens: sin límite, Azure reserva el máximo de salida del modelo en cada petición (~1M tokens)
 		# contra los tokens por minuto del despliegue y da 429 aunque se usen muchos menos
-		default_options={"store": False, "max_tokens": 8000},
+		# max_tool_calls: tope de búsquedas del MCP alojado por respuesta del modelo (no cuentan en max_function_calls)
+		default_options={"store": False, "max_tokens": 8000, "max_tool_calls": 5},
 	)
-	ResponsesHostServer(agent).run()
+	# from_env lee DEFAULT_FETCH_HISTORY_ITEM_COUNT (azure.yaml); sin pasarlo, el historial no tiene tope
+	ResponsesHostServer(agent, options=ResponsesServerOptions.from_env()).run()
 
 
 if __name__ == "__main__":
