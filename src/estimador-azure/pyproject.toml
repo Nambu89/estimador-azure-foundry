@@ -1,0 +1,14 @@
+[project]
+name = "estimador-azure"
+version = "0.1.0"
+description = "Estimador de costes de Azure: Hosted Agent de Microsoft Foundry con Agent Framework."
+requires-python = ">=3.13"
+dependencies = [
+	"agent-framework-foundry",
+	"agent-framework-foundry-hosting>=1.0.0b260813",
+	"httpx>=0.28",
+	"python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
