@@ -27,6 +27,8 @@ AGENTE_URL = os.environ.get("AGENTE_URL", "http://localhost:8088/responses")
 SIMULADO = os.environ.get("SIMULADO") == "1"
 PUERTO = int(os.environ.get("PORT", "8000"))
 LIMITE_POR_HORA = int(os.environ.get("LIMITE_POR_HORA", "30"))  # Preguntas por IP y hora: cada una gasta tokens del modelo
+# Tope para todos juntos: con muchas IPs el límite por IP no frena el gasto (unos 5-6 céntimos por pregunta)
+LIMITE_POR_DIA = int(os.environ.get("LIMITE_POR_DIA", "100"))
 MAX_CUERPO = 16_000
 MAX_PREGUNTA = 4_000
 
@@ -54,13 +56,13 @@ def cabeceras_agente() -> dict:
 	return cabeceras
 
 
-def dentro_del_limite(ip: str) -> bool:
-	"""Ventana deslizante de una hora por IP, en memoria (se reinicia con el proceso)."""
+def dentro_del_limite(clave: str, limite: int, ventana: int) -> bool:
+	"""Ventana deslizante en memoria (se reinicia con el proceso; en F1 hay un solo proceso)."""
 	ahora = time.time()
-	cola = _peticiones[ip]
-	while cola and cola[0] < ahora - 3600:
+	cola = _peticiones[clave]
+	while cola and cola[0] < ahora - ventana:
 		cola.popleft()
-	if len(cola) >= LIMITE_POR_HORA:
+	if len(cola) >= limite:
 		return False
 	cola.append(ahora)
 	return True
@@ -82,6 +84,8 @@ def validar(cuerpo: bytes) -> dict:
 
 
 class Manejador(SimpleHTTPRequestHandler):
+	timeout = 30  # Corta las conexiones que no envían nada: en la F1 cada una ocupa un hilo
+
 	def do_GET(self):
 		if self.path == "/api/estado":
 			return self.responder_json(200, {"modo": modo()})
@@ -90,7 +94,14 @@ class Manejador(SimpleHTTPRequestHandler):
 	def do_POST(self):
 		if self.path != "/api/responses":
 			return self.responder_json(404, {"error": "No existe."})
-		longitud = int(self.headers.get("Content-Length") or 0)
+		# Solo JSON: obliga al navegador a hacer preflight, que aquí no se acepta, así que otra web no puede
+		# hacer que sus visitantes gasten tokens con un formulario o un fetch text/plain (CSRF)
+		if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+			return self.responder_json(415, {"error": "Envía la pregunta como application/json."})
+		try:
+			longitud = int(self.headers.get("Content-Length") or 0)
+		except ValueError:
+			longitud = 0
 		if longitud <= 0 or longitud > MAX_CUERPO:
 			return self.responder_json(413, {"error": "La petición es demasiado grande."})
 		try:
@@ -99,8 +110,10 @@ class Manejador(SimpleHTTPRequestHandler):
 			return self.responder_json(400, {"error": str(e)})
 		# En App Service la IP real llega en X-Client-IP, que pone la plataforma (X-Forwarded-For se puede falsear y lleva el puerto)
 		ip = self.headers.get("X-Client-IP") or self.client_address[0]
-		if not dentro_del_limite(ip):
+		if not dentro_del_limite(ip, LIMITE_POR_HORA, 3600):
 			return self.responder_json(429, {"error": "Has llegado al límite de preguntas por hora. Vuelve en un rato."})
+		if not dentro_del_limite("*", LIMITE_POR_DIA, 86400):
+			return self.responder_json(429, {"error": "La demo ha llegado a su límite de preguntas de hoy. Vuelve mañana."})
 
 		if modo() == "simulado":
 			return self.reproducir("simulado-estimacion.sse" if "previous_response_id" in peticion else "simulado-pregunta.sse")
@@ -145,6 +158,19 @@ class Manejador(SimpleHTTPRequestHandler):
 
 	def end_headers(self):
 		self.send_header("X-Content-Type-Options", "nosniff")
+		# Solo lo que usa la página: sus ficheros, marked y DOMPurify del CDN y las fuentes de Google.
+		# img-src sin hosts externos: una imagen inyectada en la respuesta no puede sacar datos a otro servidor
+		self.send_header("Content-Security-Policy", "; ".join([
+			"default-src 'self'",
+			"script-src 'self' https://cdn.jsdelivr.net",
+			"style-src 'self' https://fonts.googleapis.com",
+			"font-src https://fonts.gstatic.com",
+			"img-src 'self' data:",
+			"connect-src 'self'",
+			"frame-ancestors 'none'",
+			"base-uri 'none'",
+			"form-action 'self'",
+		]))
 		if self.command == "GET":
 			# Que el navegador revalide siempre (304 si no ha cambiado): así nadie se queda con el CSS o el JS de antes de un despliegue
 			self.send_header("Cache-Control", "no-cache")

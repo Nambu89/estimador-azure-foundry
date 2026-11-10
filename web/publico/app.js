@@ -31,7 +31,8 @@ DOMPurify.addHook("afterSanitizeAttributes", (nodo) => {
 		nodo.setAttribute("rel", "noopener noreferrer");
 	}
 });
-const html = (markdown) => DOMPurify.sanitize(marked.parse(markdown));
+// Sin <img>: el agente nunca manda imágenes y una inyectada podría sacar datos por su URL
+const html = (markdown) => DOMPurify.sanitize(marked.parse(markdown), { FORBID_TAGS: ["img"] });
 
 fetch("api/estado")
 	.then((r) => r.json())

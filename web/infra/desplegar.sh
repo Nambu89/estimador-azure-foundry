@@ -17,7 +17,9 @@ token() {
 	azd auth token --tenant-id "$TENANT" --scope "https://management.azure.com//.default" -o json | python3 -c "import sys, json; print(json.load(sys.stdin)['token'])"
 }
 TOKEN="$(token)"
-api() { curl -sS --fail-with-body -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" "$@"; }
+# El token va por un descriptor (printf es interno de bash): así no sale en la línea de comandos que enseña ps
+cabecera() { printf 'Authorization: Bearer %s\n' "$TOKEN"; }
+api() { curl -sS --fail-with-body -H @<(cabecera) -H "Content-Type: application/json" "$@"; }
 campo() { python3 -c "import sys, json; d = json.load(sys.stdin); print(eval('d' + sys.argv[1]))" "$1"; }
 
 if [[ -z "${SOLO_CODIGO:-}" ]]; then
@@ -47,7 +49,7 @@ echo "· Subiendo el código a $WEB"
 PAQUETE="$(mktemp -d)/web.zip"
 (cd "$WEB_DIR" && zip -qr "$PAQUETE" server.py requirements.txt publico simulado/*.sse)
 # zipdeploy acepta el token de Entra ID: la plantilla desactiva usuario y contraseña de publicación
-curl -sS --fail-with-body -X POST -H "Authorization: Bearer $TOKEN" --data-binary @"$PAQUETE" \
+curl -sS --fail-with-body -X POST -H @<(cabecera) --data-binary @"$PAQUETE" \
 	"https://$WEB.scm.azurewebsites.net/api/zipdeploy?isAsync=false" -o /dev/null -w "  zipdeploy: HTTP %{http_code}\n"
 
 echo "Listo: https://$WEB.azurewebsites.net"

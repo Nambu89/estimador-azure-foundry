@@ -52,6 +52,7 @@ parámetro `sku` de la plantilla. Va fuera de `azure.yaml` a propósito: así `a
 | `SIMULADO` | — | `1` para usar las respuestas grabadas de `simulado/`. |
 | `PORT` | `8000` | Puerto. |
 | `LIMITE_POR_HORA` | `30` | Preguntas por IP y hora. Cada pregunta gasta tokens del modelo. |
+| `LIMITE_POR_DIA` | `100` | Preguntas al día entre todos los usuarios: el tope de gasto aunque lleguen desde muchas IP (unos 5-6 céntimos cada una). |
 
 ## Pruebas
 
