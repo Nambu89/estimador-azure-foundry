@@ -22,6 +22,9 @@ const NOMBRES = {
 };
 
 let anterior = null; // previous_response_id: así el agente recuerda la conversación
+// Clave secreta de esta conversación: el servidor solo deja continuarla a quien la conoce
+const nuevaClave = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), (b) => b.toString(16).padStart(2, "0")).join("");
+let clave = nuevaClave();
 let ocupado = false;
 
 // Los enlaces de la respuesta se abren fuera, sin dar acceso a esta ventana
@@ -70,6 +73,7 @@ for (const boton of document.querySelectorAll(".ejemplo")) {
 nueva.addEventListener("click", () => {
 	if (ocupado) return;
 	anterior = null;
+	clave = nuevaClave();
 	conversacion.replaceChildren(inicio);
 	inicio.hidden = false;
 	nueva.hidden = true;
@@ -97,9 +101,14 @@ async function preguntar(texto) {
 		const respuesta = await fetch("api/responses", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ input: texto, ...(anterior && { previous_response_id: anterior }) }),
+			body: JSON.stringify({ input: texto, clave, ...(anterior && { previous_response_id: anterior }) }),
 		});
 		if (!respuesta.ok) {
+			// 403: la conversación ya no está en el servidor (reinicio o caducidad); la siguiente pregunta empieza otra
+			if (respuesta.status === 403) {
+				anterior = null;
+				clave = nuevaClave();
+			}
 			const { error } = await respuesta.json().catch(() => ({}));
 			throw new Error(error || `El servidor ha respondido ${respuesta.status}.`);
 		}
