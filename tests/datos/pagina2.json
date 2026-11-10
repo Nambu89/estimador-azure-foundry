@@ -1,0 +1,52 @@
+{
+	"BillingCurrency": "USD",
+	"Items": [
+		{
+			"currencyCode": "EUR",
+			"tierMinimumUnits": 0.0,
+			"retailPrice": 0.02,
+			"unitPrice": 0.02,
+			"armRegionName": "swedencentral",
+			"meterId": "blob-hot-lrs",
+			"meterName": "Hot LRS Data Stored",
+			"productName": "Blob Storage",
+			"skuName": "Hot LRS",
+			"serviceName": "Storage",
+			"unitOfMeasure": "1 GB/Month",
+			"type": "Consumption",
+			"skuId": "PRUEBA0002/0001"
+		},
+		{
+			"currencyCode": "EUR",
+			"tierMinimumUnits": 51200.0,
+			"retailPrice": 0.019,
+			"unitPrice": 0.019,
+			"armRegionName": "swedencentral",
+			"meterId": "blob-hot-lrs",
+			"meterName": "Hot LRS Data Stored",
+			"productName": "Blob Storage",
+			"skuName": "Hot LRS",
+			"serviceName": "Storage",
+			"unitOfMeasure": "1 GB/Month",
+			"type": "Consumption",
+			"skuId": "PRUEBA0002/0001"
+		},
+		{
+			"currencyCode": "EUR",
+			"tierMinimumUnits": 0.0,
+			"retailPrice": 0.05,
+			"unitPrice": 0.05,
+			"armRegionName": "swedencentral",
+			"meterId": "blob-escrituras",
+			"meterName": "Hot LRS Write Operations",
+			"productName": "Blob Storage",
+			"skuName": "Hot LRS",
+			"serviceName": "Storage",
+			"unitOfMeasure": "10K",
+			"type": "Consumption",
+			"skuId": "PRUEBA0002/0001"
+		}
+	],
+	"NextPageLink": null,
+	"Count": 3
+}
