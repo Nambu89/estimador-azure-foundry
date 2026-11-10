@@ -197,7 +197,9 @@ Precios de lista en EUR, Sweden Central, consultados con la propia api el 9 de n
 - El contenedor (0,5 vCPU y 1 GiB) cuesta 0,061 €/hora **solo mientras hay una sesión activa**: se apaga tras
   15 minutos sin peticiones.
 - **Medido de verdad:** las pruebas de este tutorial (182 llamadas al modelo, unas quince estimaciones) costaron
-  0,85 € en tokens. Una estimación sale por unos **5 o 6 céntimos**.
+  0,85 € en tokens, unos 5-6 céntimos de media. Pero varía mucho: una sola pregunta en producción gastó
+  **1.031.774 tokens de entrada** (unos 25 céntimos), porque cada vuelta del bucle de herramientas reenvía todo el
+  contexto. Por eso el tope de gasto de la web es un presupuesto de tokens y no un número de preguntas.
 - La capacidad del despliegue no cuesta nada: se paga por token, no por capacidad.
 
 ## Limpieza
@@ -228,9 +230,20 @@ No llaman a Azure: usan respuestas guardadas de la api, varias de ellas reales (
   de Foundry tiene `disableLocalAuth=true`, así que sus claves de API no sirven. La api de precios y el MCP de Learn
   son públicos. Por eso no hay Key Vault: estaría vacío. Si algún día entra una clave de terceros, su sitio es un
   Key Vault leído con la identidad administrada, nunca un fichero ni un ajuste en claro.
-- **Gasto acotado.** La web es pública: tiene un límite por IP y hora y un tope diario para todos
-  (`LIMITE_POR_DIA`), solo acepta `application/json` (otra web no puede hacer que sus visitantes gasten tokens) y
-  el agente limita las vueltas del bucle de herramientas y los tokens de salida de cada llamada.
+- **Gasto acotado.** La web es pública. El tope de verdad es un **presupuesto diario de tokens**
+  (`LIMITE_TOKENS_DIA`), medido con el uso real de cada respuesta: al admitir una pregunta se reserva una cantidad
+  pesimista y se cambia por el uso real al terminar, así que también cuentan las preguntas en curso y las que el
+  navegador corta. Además hay límites de preguntas por IP (hora y día, por debajo del tope global para que una IP
+  no lo agote sola) y al día, que se guardan en `/home` y sobreviven a los reinicios del proceso. Solo se acepta
+  `application/json` (otra web no puede hacer que sus visitantes gasten tokens) y como mucho hay 32 conexiones a
+  la vez, con un plazo total para recibir cada petición.
+- **Conversaciones aisladas.** Todas las peticiones llegan al agente con la misma identidad, así que el proxy ata
+  cada conversación a una clave secreta que genera el navegador: sin ella, un `previous_response_id` ajeno da 403.
+  Cada conversación admite como mucho 8 preguntas y el agente reenvía al modelo como mucho 400 elementos del
+  historial (`DEFAULT_FETCH_HISTORY_ITEM_COUNT`).
+- **Agente.** Limita las vueltas del bucle, las llamadas a herramientas (en serie), la duración de cada pregunta,
+  las búsquedas del MCP y los tokens de salida, y todas las consultas a la api de precios del proceso pasan por un
+  cupo global (4 a la vez, 120 por minuto).
 - **Navegador.** El markdown del agente pasa por DOMPurify, sin imágenes, y la página lleva una
   Content-Security-Policy que solo permite sus propios ficheros, el CDN de las dos librerías y las fuentes.
 

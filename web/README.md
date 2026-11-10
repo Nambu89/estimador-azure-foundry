@@ -51,8 +51,16 @@ parámetro `sku` de la plantilla. Va fuera de `azure.yaml` a propósito: así `a
 | `AGENTE_URL` | `http://localhost:8088/responses` | Dónde está el agente. Si empieza por `https://` pide un token de Entra ID con `DefaultAzureCredential`. |
 | `SIMULADO` | — | `1` para usar las respuestas grabadas de `simulado/`. |
 | `PORT` | `8000` | Puerto. |
-| `LIMITE_POR_HORA` | `30` | Preguntas por IP y hora. Cada pregunta gasta tokens del modelo. |
-| `LIMITE_POR_DIA` | `100` | Preguntas al día entre todos los usuarios: el tope de gasto aunque lleguen desde muchas IP (unos 5-6 céntimos cada una). |
+| `LIMITE_TOKENS_DIA` | `15000000` | **El tope de gasto**: tokens del modelo al día entre todos, con el uso real de cada respuesta. Una pregunta puede pasar del millón. |
+| `RESERVA_TOKENS` | `800000` | Tokens que se apartan al admitir cada pregunta y se cambian por el uso real al terminar (o se quedan si el navegador corta). |
+| `LIMITE_POR_HORA` | `10` | Preguntas por IP y hora. |
+| `LIMITE_IP_DIA` | `20` | Preguntas por IP y día. Tiene que ser menor que `LIMITE_POR_DIA`, para que una IP no agote el tope global. |
+| `LIMITE_POR_DIA` | `100` | Preguntas al día entre todos los usuarios. |
+| `MAX_TURNOS` | `8` | Preguntas encadenadas por conversación (el historial se reenvía entero en cada una). |
+| `FICHERO_LIMITES` | `/home/estimador-limites.json` en App Service | Dónde se guardan los contadores diarios para que sobrevivan a un reinicio. En local, solo memoria. |
+
+La IP del visitante sale de la última entrada de `X-Forwarded-For`, la que añade el frontal de App Service; las
+IPv6 se cuentan por su /64. Cada conversación va atada a una clave aleatoria que genera el navegador.
 
 ## Pruebas
 
