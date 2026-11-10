@@ -221,6 +221,19 @@ cd src/estimador-azure && uv sync && cd ../.. && src/estimador-azure/.venv/bin/p
 
 No llaman a Azure: usan respuestas guardadas de la api, varias de ellas reales (`tests/datos`).
 
+## Seguridad
+
+- **Sin secretos.** Todo se autentica con identidades de Entra: la web llama al agente con su identidad
+  administrada (rol Foundry Agent Consumer), el agente llama al modelo con la identidad del proyecto y la cuenta
+  de Foundry tiene `disableLocalAuth=true`, así que sus claves de API no sirven. La api de precios y el MCP de Learn
+  son públicos. Por eso no hay Key Vault: estaría vacío. Si algún día entra una clave de terceros, su sitio es un
+  Key Vault leído con la identidad administrada, nunca un fichero ni un ajuste en claro.
+- **Gasto acotado.** La web es pública: tiene un límite por IP y hora y un tope diario para todos
+  (`LIMITE_POR_DIA`), solo acepta `application/json` (otra web no puede hacer que sus visitantes gasten tokens) y
+  el agente limita las vueltas del bucle de herramientas y los tokens de salida de cada llamada.
+- **Navegador.** El markdown del agente pasa por DOMPurify, sin imágenes, y la página lleva una
+  Content-Security-Policy que solo permite sus propios ficheros, el CDN de las dos librerías y las fuentes.
+
 ## Lo que aprendimos por el camino
 
 | Síntoma | Causa | Arreglo |
