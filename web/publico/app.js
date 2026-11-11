@@ -59,11 +59,12 @@ formulario.addEventListener("submit", (e) => {
 });
 
 pregunta.addEventListener("keydown", (e) => {
-	// Enter envía, Mayús+Enter salta de línea (y no enviamos a mitad de una composición con IME)
-	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-		e.preventDefault();
-		formulario.requestSubmit();
-	}
+	// Enter envía, Mayús+Enter salta de línea
+	if (e.key !== "Enter" || e.shiftKey) return;
+	// Con IME (japonés, chino…) el Enter confirma la palabra y no se toca: Safari pone isComposing a false antes de tiempo, pero sigue mandando keyCode 229
+	if (e.isComposing || e.keyCode === 229) return;
+	e.preventDefault();
+	formulario.requestSubmit();
 });
 
 for (const boton of document.querySelectorAll(".ejemplo")) {
@@ -345,6 +346,10 @@ function prepararTabla(tabla, servicios) {
 
 	const envoltorio = document.createElement("div");
 	envoltorio.className = "tabla";
+	// Con scroll horizontal, sin tabindex no se puede desplazar con el teclado
+	envoltorio.tabIndex = 0;
+	envoltorio.setAttribute("role", "region");
+	envoltorio.setAttribute("aria-label", "Desglose de costes mensuales");
 	tabla.replaceWith(envoltorio);
 	envoltorio.append(tabla);
 	return envoltorio;

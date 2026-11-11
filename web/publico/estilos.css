@@ -24,6 +24,7 @@
 	--rapido: 160ms;
 	--suave: cubic-bezier(.2, .7, .2, 1);
 	color-scheme: dark;
+	scrollbar-color: var(--verde-oscuro) var(--fondo);
 }
 
 * { box-sizing: border-box; }
@@ -45,6 +46,8 @@ body {
 	background-attachment: fixed;
 	color: var(--texto);
 	font: 400 1rem/1.6 var(--sans);
+	/* Mientras cargan las fuentes de Google, la de reserva ocupa lo mismo: el texto no salta (visually-stable-font-fallbacks) */
+	font-size-adjust: from-font;
 }
 
 a { color: var(--fosforo); text-underline-offset: 3px; }
@@ -199,6 +202,12 @@ h1 em { color: var(--fosforo); }
 	transform: rotate(45deg) translateY(-2px); transition: transform var(--rapido);
 }
 .traza[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
+/* La traza se pliega y despliega deslizando; sin soporte, se abre de golpe como antes (accordion) */
+.traza::details-content { interpolate-size: allow-keywords; overflow: clip; contain: layout; }
+.traza:not([open])::details-content { block-size: 0; }
+@media (prefers-reduced-motion: no-preference) {
+	.traza::details-content { transition: block-size, content-visibility, display; transition-duration: 280ms; transition-timing-function: var(--suave); transition-behavior: allow-discrete; }
+}
 .traza-estado { color: var(--texto); white-space: nowrap; }
 .crono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--texto-3); font-variant-numeric: tabular-nums; }
 
